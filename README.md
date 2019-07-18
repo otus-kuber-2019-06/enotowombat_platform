@@ -1,8 +1,8 @@
-# Homework 1 (Знакомство с Kubernetes)
+# Homework 1 (kubernetes-intro)
 
 
 #### Установка Minikube
-- Ставим kubectl и Minikube с Virtualbox в Centos + kubectl\
+- Ставим kubectl и Minikube с Virtualbox в Centos + kubectl
 
 ```
 😄  minikube v1.2.0 on linux (amd64)
@@ -17,7 +17,8 @@ KubeDNS is running at https://192.168.99.100:8443/api/v1/namespaces/kube-system/
 
 #### Проверка восстановления компонентов
 
-- Удаляем контейнеры: `minikube ssh`, `docker rm -f $(docker ps -a -q)`\
+- Удаляем контейнеры: `minikube ssh`, `docker rm -f $(docker ps -a -q)`
+
 Контейнеры запускаются заново, но поды не пересоздаются, если посмотреть kubectl get pods -n kube-system, видно, что время жизни подов не меняется
 
 ```
@@ -59,7 +60,8 @@ etcd-0               Healthy   {"health":"true"}
 
 #### Почему все pod в namespace kube-system восстановились после удаления
 
-- coredns и kubernetes-dashboard (аддоны) запущены как Replica Set, если упали, kubelet запускает новые. Сам kubelet работает на хосте, мы его не убивали\
+- coredns и kubernetes-dashboard (аддоны) запущены как Replica Set, если упали, kubelet запускает новые. Сам kubelet работает на хосте, мы его не убивали
+
 ```
 $ kubectl describe pods coredns-5c98db65d4-h5l8b -n kube-system
 Controlled By:        ReplicaSet/coredns-5c98db65d4
@@ -134,3 +136,25 @@ Events:
 $ kubectl port-forward --address 0.0.0.0 pod/web 8000:8000
 Forwarding from 0.0.0.0:8000 -> 8000
 Handling connection for 8000
+
+
+# Homework 2 (kubernetes-security)
+
+
+#### Task01
+- ServiceAccount bob
+- ClusterRoleBinding сервисаккаунта bob и default ClusterRole admin
+- ServiceAccount dave без каких-либо ролей
+
+#### Task02
+- Namespace prometheus
+- ServiceAccount carol
+- ClusterRole pod-reader
+- ClusterRoleBinding роли pod-reader и всем в system:serviceaccounts:prometheus 
+
+#### Task03
+- Namespace dev
+- ServiceAccount jane
+- ClusterRoleBinding jane и default ClusterRole admin c ограничением на namespace dev
+- ServiceAccount ken
+- ClusterRoleBinding ken и default ClusterRole view c ограничением на namespace dev
