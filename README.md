@@ -431,3 +431,99 @@ $ curl -H "Host: web.com" http://172.17.255.3/web
 $ curl -H "canary: always" -H "Host: web.com" http://172.17.255.3/web
 1.2
 ```
+
+### Homework 4 (kubernetes-volumes)
+
+
+#### Запускаем kind
+
+Не забываем добавить своего юзера в группу docker, иначе с kind без sudo могут возникнуть проблемы  
+Нужные образы потребовалось сначала загрузить в кластер
+`kind load docker-image minio/minio:RELEASE.2019-07-10T00-34-56Z`
+
+#### Создаем minio
+
+Проверяем
+
+```
+$ kubectl get statefulsets
+NAME    READY   AGE
+minio   1/1     73m
+
+$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+minio-0   1/1     Running   0          74m
+
+$ kubectl get pvc
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+data-minio-0   Bound    pvc-6bb57663-5e64-40f6-91e9-754b2eb53de7   10Gi       RWO            standard       23m
+
+$ kubectl get pv
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                  STORAGECLASS   REASON   AGE
+pvc-6bb57663-5e64-40f6-91e9-754b2eb53de7   10Gi       RWO            Delete           Bound    default/data-minio-0   standard                23m
+```
+
+#### Задание со *. Поместите данные в secret и настройте конфигурацию на их использование
+
+Кодируем MINIO_ACCESS_KEY и MINIO_SECRET_KEY в base64:
+```
+$ echo -n 'minio' | base64
+bWluaW8=
+$ echo -n 'minio123' | base64
+bWluaW8xMjM=
+```
+
+Создаем secret:
+```
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-secret
+type: Opaque
+data:
+  access-key: bWluaW8=
+  secret-key: bWluaW8xMjM=
+```
+
+```
+$ kubectl get secret minio-secret -o yaml
+apiVersion: v1
+data:
+  access-key: bWluaW8=
+  secret-key: bWluaW8xMjM=
+kind: Secret
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","data":{"access-key":"bWluaW8=","secret-key":"bWluaW8xMjM="},"kind":"Secret","metadata":{"annotations":{},"name":"minio-secret","namespace":"default"},"type":"Opaque"}
+  creationTimestamp: "2019-08-02T16:10:52Z"
+  name: minio-secret
+  namespace: default
+  resourceVersion: "5711"
+  selfLink: /api/v1/namespaces/default/secrets/minio-secret
+  uid: 0bd1fa1b-3a76-496e-9e95-5ba5ac4c3f1b
+type: Opaque
+```
+
+Меняем в StatefulSet:
+```
+        env:
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-secret
+              key: access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-secret
+              key: secret-key   
+```
+
+```
+$ kubectl describe statefulset minio
+...
+    Environment:
+      MINIO_ACCESS_KEY:  <set to the key 'access-key' in secret 'minio-secret'>  Optional: false
+      MINIO_SECRET_KEY:  <set to the key 'secret-key' in secret 'minio-secret'>  Optional: false
+```
