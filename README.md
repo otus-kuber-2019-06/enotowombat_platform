@@ -527,3 +527,61 @@ $ kubectl describe statefulset minio
       MINIO_ACCESS_KEY:  <set to the key 'access-key' in secret 'minio-secret'>  Optional: false
       MINIO_SECRET_KEY:  <set to the key 'secret-key' in secret 'minio-secret'>  Optional: false
 ```
+
+### Homework 5 (kubernetes-storage)
+
+#### Создать кластер
+`$ kind create cluster --config cluster.yaml`
+
+#### Установить драйвер
+```
+$ git clone https://github.com/kubernetes-csi/csi-driver-host-path.git
+$ csi-driver-host-path/deploy/kubernetes-1.13/deploy-hostpath.sh
+$ kubectl get pods
+NAME                         READY   STATUS    RESTARTS   AGE
+csi-hostpath-attacher-0      1/1     Running   0          75s
+csi-hostpath-provisioner-0   1/1     Running   0          73s
+csi-hostpath-resizer-0       1/1     Running   0          73s
+csi-hostpath-snapshotter-0   1/1     Running   0          72s
+csi-hostpath-socat-0         1/1     Running   0          72s
+csi-hostpathplugin-0         3/3     Running   0          74s
+
+$ kubectl get sc
+NAME                 PROVISIONER               AGE
+csi-hostpath-sc      hostpath.csi.k8s.io       94s
+standard (default)   kubernetes.io/host-path   43m
+```
+
+#### Создать StorageClass и PVC
+
+```
+$ kubectl get pvc
+NAME          STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS      AGE
+storage-pvc   Bound    pvc-63d46088-b6a8-42d0-89aa-aae89baa0e90   1Gi        RWO            csi-hostpath-sc   3s
+
+$ kubectl get volumesnapshotclass
+NAME                     AGE
+csi-hostpath-snapclass   25m
+```
+
+#### Проверить снепшоты
+
+Записываем тестовые данные
+
+`root@storage-pod:/# echo test > /data/data`
+
+Создаем снепшот
+```
+$ kubectl get volumesnapshot
+NAME               AGE
+storage-snapshot   26s
+```
+
+Удаляем pvc, pod
+Создаем pvc из снепшота, создаем под
+
+Все на месте
+```
+root@storage-pod:/# cat /data/data
+test
+```
