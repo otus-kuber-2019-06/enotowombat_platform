@@ -5,7 +5,8 @@ metadata:
 spec:
   containers:
   - name: storage
-    image: ubuntu                                                                                                                                                                                                      command: ["/bin/bash", "-ec", "while :; do sleep 2; done;"]
+    image: ubuntu
+    command: ["/bin/bash", "-ec", "while :; do sleep 2; done;"]
     volumeMounts:
     - mountPath: /data
       name: storage-volume
