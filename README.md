@@ -585,3 +585,113 @@ storage-snapshot   26s
 root@storage-pod:/# cat /data/data
 test
 ```
+
+### Homework 6 (kubernetes-debug)
+
+
+#### kubectl debug
+
+Устанавливаем по инструкции, версия 0.1.1
+
+При запуске в daemonset используется старая версия агента, `image: aylei/debug-agent:0.0.1`, в ней нет ptrace и admin capbilities для debug контейнера, поэтому strace не работает.
+Добавлены в версии v0.1.1: `v0.1.1 90ee6bf Add ptrace and admin capbilities for debug container`
+`CapAdd:      strslice.StrSlice([]string{"SYS_PTRACE", "SYS_ADMIN"}),`
+Можно поменять в daemonset манифесте на новую версию, а можно просто работать в --agentless режиме, который не использует daemonset - так и сделал
+`kubectl debug POD_NAME --agentless`
+
+#### iptables-tailer
+Выполнялось на ВМ на baremetal, Centos7, calico, 2 воркера
+
+Устанавливаем iptables-tailer
+
+```
+git clone https://github.com/piontec/netperf-operator.git
+cd netperf-operator
+kubectl create -f deploy/crd.yaml
+kubectl create -f deploy/rbac.yaml
+kubectl create -f deploy/operator.yaml
+```
+
+`$ kubectl apply -f cr.yaml`
+
+```
+$ kubectl describe netperf.app.example.com/example
+Name:         example
+Namespace:    default
+Labels:       <none>
+Annotations:  kubectl.kubernetes.io/last-applied-configuration:
+                {"apiVersion":"app.example.com/v1alpha1","kind":"Netperf","metadata":{"annotations":{},"name":"example","namespace":"default"}}
+API Version:  app.example.com/v1alpha1
+Kind:         Netperf
+Metadata:
+  Creation Timestamp:  2019-09-20T12:02:20Z
+  Generation:          4
+  Resource Version:    5194034
+  Self Link:           /apis/app.example.com/v1alpha1/namespaces/default/netperfs/example
+  UID:                 f2bee90a-dbf7-4f07-9cfd-c4d16674833a
+Spec:
+  Client Node:
+  Server Node:
+Status:
+  Client Pod:          netperf-client-c4d16674833a
+  Server Pod:          netperf-server-c4d16674833a
+  Speed Bits Per Sec:  103.63
+  Status:              Done
+Events:                <none>
+```
+
+Добавляем сетевую политику
+```
+$ kubectl apply -f https://raw.githubusercontent.com/express42/otus-platform-snippets/master/Module-03/Debugging/netperf-calico-policy.yaml
+networkpolicy.crd.projectcalico.org/netperf-calico-policy created
+```
+В логах ноды Kubernetes появились сообщения об отброшенных пакетах
+
+Устанавливаем iptables-tailer.
+Собрал образ по инструкции в репозитории, нашел пример daemonset в demo директории, сравнил с `iptables-tailer.yaml` из сниппета, в итоге просто создал из `iptables-tailer.yaml`)
+Но `"JOURNAL_DIRECTORY" = "/var/log/journal"` на centos7 просто так работать не будет, сделал следующее:
+```
+mkdir /var/log/journal
+systemd-tmpfiles --create --prefix /var/log/journal
+systemctl restart systemd-journald
+```
+
+Создаем ServiceAccount, ClusterRole, ClusterRoleBinding
+`calico-packet`, `JOURNAL_DIRECTORY`, `C-Go` - уже есть
+Запускаем тест:
+```
+default         4m6s        Warning   PacketDrop                pod/netperf-client-d95dc03b0048                 Packet dropped when sending traffic to server (10.0.235.168)
+```
+
+#### Задание со ⭐
+
+#### Поправьте манифест DaemonSet из репозитория, чтобы в логах отображались имена Podов, а не их IP-адреса
+POD_IDENTIFIER = "name"
+ip остался, но добавилось имя пода
+```
+default       50s         Warning   PacketDrop         pod/netperf-client-d5fcdf35bef7   Packet dropped when sending traffic to netperf-server-d5fcdf35bef7 (10.0.235.180)
+```
+
+#### Исправьте ошибку в нашей сетевой политике, чтобы Netperf снова начал работать
+
+Можно сделать селекторы для ingress и egress netperf-type == "client" и netperf-type == "server", остальное оставить как есть, но вроде можно сократить описание:
+```
+spec:
+  order: 10
+  selector: netperf-type == "server"
+  ingress:
+    - action: Allow
+      source:
+        selector: netperf-type == "client"
+    - action: Log
+    - action: Deny
+```
+Drop пакетов нет, тест проходит:
+```
+Status:
+  Client Pod:          netperf-client-40f3ea396501
+  Server Pod:          netperf-server-40f3ea396501
+  Speed Bits Per Sec:  105.82
+  Status:              Done
+Events:                <none>
+```  
