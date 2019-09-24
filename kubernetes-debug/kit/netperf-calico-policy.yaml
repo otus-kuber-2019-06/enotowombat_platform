@@ -1,0 +1,14 @@
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: netperf-calico-policy
+  labels:
+spec:
+  order: 10
+  selector: netperf-type == "server"
+  ingress:
+    - action: Allow
+      source:
+        selector: netperf-type == "client"
+    - action: Log
+    - action: Deny
