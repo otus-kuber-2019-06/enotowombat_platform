@@ -695,3 +695,198 @@ Status:
   Status:              Done
 Events:                <none>
 ```  
+
+### Homework 7 ( kubernetes-operators)
+
+
+#### CustomResource, CustomResourceDefinition
+
+Создаем/исправляем cr, crd по инструкции, добавляем validation и required
+```
+          required:
+          - image
+          - database
+          - password
+          - storage_size
+      required:
+      - apiVersion
+      - kind
+      - metadata
+      - spec
+```
+
+#### Операторы
+
+Пишем оператор на Python
+Не понял как установить kopf локально, запускал сразу в контейнере
+
+```
+docker build build/ -t enot/mysql-operator:v1
+docker push enot/mysql-operator:v1
+```
+
+
+
+#### Вопрос: почему объект создался, хотя мы создали CR, до того, как запустили контроллер?
+
+Оператор постоянно проверяет наличие необработанных объектов, создался -> проверил -> нашел -> обработал, обработанное больше не обрабатывает
+```
+Note that the operator has noticed an object created before the operator was even started, and handled it – since it was not handled before
+The operator will not handle the object, as now it is already successfully handled
+```
+
+```
+$ kubectl get po
+NAME                              READY   STATUS    RESTARTS   AGE
+mysql-instance-6c76bcf945-49rdn   1/1     Running   0          2m6s
+mysql-operator-7964b4b5c7-8lmgz   1/1     Running   0          3m27s
+```
+
+Заполняем базу
+```
+$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+```
+Удаляем mysql-instance
+
+```
+$ kubectl get pvc
+NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+backup-mysql-instance-pvc   Bound    pvc-095ec365-f4be-45e6-a920-9f9e67702a41   1Gi        RWO            standard       15m
+```
+
+Создаем mysql-instance
+
+```
+$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
++----+-------------+
+| id | name        |
++----+-------------+
+|  1 | some data   |
+|  2 | some data-2 |
++----+-------------+
+$ kubectl get pvc
+NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+backup-mysql-instance-pvc   Bound    pvc-095ec365-f4be-45e6-a920-9f9e67702a41   1Gi        RWO            standard       17m
+mysql-instance-pvc          Bound    pvc-b16e7caf-ab19-4d4c-a649-de394974eda8   1Gi        RWO            standard       83s
+```
+
+Образ с оператором собран и запушен, все работает
+
+#### Задание со 🌟 (1)
+
+Нужно получить следующее:
+```
+Status:
+  Kopf:
+  mysql_on_create:
+    Message:  mysql-instance created without restore-job
+```
+Дообавляем в `mysql_on_create` перед созданием `restore_job`(или вообще этот job убрать), потому что в примере "without restore-job", и после создания pv и pvc
+
+Проверяем
+
+Backup pvc создается
+```
+$ kubectl get pvc
+NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+backup-mysql-instance-pvc   Bound    pvc-7b32001f-7dd4-42a8-ba25-d532ff3217f3   1Gi        RWO            standard       2s
+mysql-instance-pvc          Bound    pvc-823faab7-4aa2-4c77-bb2f-32f85726803b   1Gi        RWO            standard       2s
+```
+
+Restore не выполняется
+```
+$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
+mysql: [Warning] Using a password on the command line interface can be insecure.
+ERROR 1146 (42S02) at line 1: Table 'otus-database.test' doesn't exist
+command terminated with exit code 1
+```
+
+Message присутствует
+```
+$ kubectl describe mysqls.otus.homework mysql-instance
+Name:         mysql-instance
+Namespace:    default
+Labels:       <none>
+Annotations:  kopf.zalando.org/last-handled-configuration:
+                {"spec": {"database": "otus-database", "image": "mysql:5.7", "password": "otuspassword", "storage_size": "1Gi"}}
+              kubectl.kubernetes.io/last-applied-configuration:
+                {"apiVersion":"otus.homework/v1","kind":"MySQL","metadata":{"annotations":{},"name":"mysql-instance","namespace":"default"},"spec":{"datab...
+API Version:  otus.homework/v1
+Kind:         MySQL
+Metadata:
+  Creation Timestamp:  2019-09-25T16:15:37Z
+  Finalizers:
+    kopf.zalando.org/KopfFinalizerMarker
+  Generation:        2
+  Resource Version:  6130
+  Self Link:         /apis/otus.homework/v1/namespaces/default/mysqls/mysql-instance
+  UID:               33f0c26e-a27b-4d42-907d-cd95c45ea48d
+Spec:
+  Database:      otus-database
+  Image:         mysql:5.7
+  Password:      otuspassword
+  storage_size:  1Gi
+Status:
+  Kopf:
+  mysql_on_create:
+    Message:  mysql-instance created without restore-job
+Events:
+  Type    Reason   Age    From  Message
+  ----    ------   ----   ----  -------
+  Normal  Logging  2m56s  kopf  Handler 'mysql_on_create' succeeded.
+  Normal  Logging  2m56s  kopf  All handlers succeeded for creation.
+  Normal  Logging  2m56s  kopf  mysql Deployment mysql-instance created
+```
+status subresource в crd почему-то добавлять не нужно, работает без этого
+
+
+Второе задание не доделал, очень мучительно отлаживать, когда зависает изменение или удаление ресурса
+
+Идея была сделать обработку изменения поля, `kopf.on.field`, примерно так:
+```
+@kopf.on.field('otus.homework', 'v1', 'mysqls', field='spec.password')
+def mysql_on_field(body, old, new, **kwargs):
+
+    api = kubernetes.client.BatchV1Api()
+
+    chpasswd_job = render_template('chpasswd-job.yml.j2', {
+        'oldpasswd': old,
+        'newpasswd': new})
+    api.create_namespaced_job('default', chpasswd_job)
+
+    print(f'Handling the FIELD = {old} -> {new}')
+    kopf.event(body, type='Warning', reason='Logging', message=f"password changed from {old} to {new}")
+    return {'message': f"password changed from {old.spec.password} to {new.spec.password}"}
+```
+При изменении password выполнять примерно такую джобу:
+```
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: change-password-job
+  namespace: default
+  labels:
+    usage: change-password-job
+spec:
+  template:
+    metadata:
+      name: change-password-job
+    spec:
+      containers:
+      - name: change-password
+        image: busybox
+        command:
+        - export MYSQLPOD=$(kubectl get pods -l app=mysql-instance -o jsonpath="{.items[*].metadata.name}")
+        - kubectl exec -it $MYSQLPOD -- mysql -u root -p{{ oldpasswd }} -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('{{ newpasswd }}');" otus-database
+      restartPolicy: Never
+  backoffLimit: 0
+  ```
+Выполняется один раз, коннектится к базе, меняет пароль, ничего при этом не пересоздается
