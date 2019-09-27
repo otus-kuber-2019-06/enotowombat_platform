@@ -782,34 +782,30 @@ mysql-instance-pvc          Bound    pvc-b16e7caf-ab19-4d4c-a649-de394974eda8   
 
 #### Задание со 🌟 (1)
 
-Нужно получить следующее:
-```
-Status:
-  Kopf:
-  mysql_on_create:
-    Message:  mysql-instance created without restore-job
-```
-Дообавляем в `mysql_on_create` перед созданием `restore_job`(или вообще этот job убрать), потому что в примере "without restore-job", и после создания pv и pvc
+Дообавляем в `mysql_on_create` проверку создания `restore_job`, результат сохраняем в `restore_result` и после выполнения пишем результат в статус:
 
-Проверяем
+`return {'message': f"mysql-instance created {restore_result} restore-job"}`
+Плюс генерим соответствующий эвент
 
-Backup pvc создается
+Проверяем, запускаем первый раз
+
 ```
 $ kubectl get pvc
 NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-backup-mysql-instance-pvc   Bound    pvc-7b32001f-7dd4-42a8-ba25-d532ff3217f3   1Gi        RWO            standard       2s
-mysql-instance-pvc          Bound    pvc-823faab7-4aa2-4c77-bb2f-32f85726803b   1Gi        RWO            standard       2s
+backup-mysql-instance-pvc   Bound    pvc-17c88d49-f05e-4ec6-bf0d-072285a518d3   1Gi        RWO            standard       32s
+mysql-instance-pvc          Bound    pvc-e9ae05c6-e487-4db5-867c-3354ae0e0521   1Gi        RWO            standard       32s
+
+$ kubectl get po
+NAME                               READY   STATUS             RESTARTS   AGE
+mysql-instance-6c76bcf945-zkzrm    1/1     Running            0          57s
+mysql-operator-5d5d97999d-dtfdg    1/1     Running            0          2m17s
+restore-mysql-instance-job-hfb7c   0/1     CrashLoopBackOff   2          57s
+$ kubectl logs restore-mysql-instance-job-hfb7c
+/bin/sh: 1: cannot open /backup-mysql-instance-pv/mysql-instance-dump.sql: No such file
 ```
 
-Restore не выполняется
-```
-$ kubectl exec -it $MYSQLPOD -- mysql -potuspassword -e "select * from test;" otus-database
-mysql: [Warning] Using a password on the command line interface can be insecure.
-ERROR 1146 (42S02) at line 1: Table 'otus-database.test' doesn't exist
-command terminated with exit code 1
-```
+Джоба тем не менее создается, просто не отрабатывает, поэтому в статусе написано, что она создана:
 
-Message присутствует
 ```
 $ kubectl describe mysqls.otus.homework mysql-instance
 Name:         mysql-instance
@@ -822,13 +818,52 @@ Annotations:  kopf.zalando.org/last-handled-configuration:
 API Version:  otus.homework/v1
 Kind:         MySQL
 Metadata:
-  Creation Timestamp:  2019-09-25T16:15:37Z
+  Creation Timestamp:  2019-09-27T16:23:21Z
   Finalizers:
     kopf.zalando.org/KopfFinalizerMarker
   Generation:        2
-  Resource Version:  6130
+  Resource Version:  607
   Self Link:         /apis/otus.homework/v1/namespaces/default/mysqls/mysql-instance
-  UID:               33f0c26e-a27b-4d42-907d-cd95c45ea48d
+  UID:               c4849aa1-b93d-4b4a-abcb-dedc28eac11c
+Spec:
+  Database:      otus-database
+  Image:         mysql:5.7
+  Password:      otuspassword
+  storage_size:  1Gi
+Status:
+  Kopf:
+  mysql_on_create:
+    Message:  mysql-instance created with restore-job
+Events:
+  Type    Reason   Age    From  Message
+  ----    ------   ----   ----  -------
+  Normal  Logging  2m44s  kopf  restore_job created
+  Normal  Logging  2m44s  kopf  mysql deployment mysql-instance created
+  Normal  Logging  2m44s  kopf  All handlers succeeded for creation.
+  Normal  Logging  2m44s  kopf  Handler 'mysql_on_create' succeeded.
+```
+
+Удаляем инстанс, для проверки неуспешного создания джобы создаем другую с тем же именем, проверяем:
+
+```
+$ kubectl describe mysqls.otus.homework mysql-instance
+Name:         mysql-instance
+Namespace:    default
+Labels:       <none>
+Annotations:  kopf.zalando.org/last-handled-configuration:
+                {"spec": {"database": "otus-database", "image": "mysql:5.7", "password": "otuspassword", "storage_size": "1Gi"}}
+              kubectl.kubernetes.io/last-applied-configuration:
+                {"apiVersion":"otus.homework/v1","kind":"MySQL","metadata":{"annotations":{},"name":"mysql-instance","namespace":"default"},"spec":{"datab...
+API Version:  otus.homework/v1
+Kind:         MySQL
+Metadata:
+  Creation Timestamp:  2019-09-27T16:44:06Z
+  Finalizers:
+    kopf.zalando.org/KopfFinalizerMarker
+  Generation:        2
+  Resource Version:  2691
+  Self Link:         /apis/otus.homework/v1/namespaces/default/mysqls/mysql-instance
+  UID:               c8a427eb-d5bf-4fd3-8d5c-19b1d5a5a722
 Spec:
   Database:      otus-database
   Image:         mysql:5.7
@@ -839,18 +874,20 @@ Status:
   mysql_on_create:
     Message:  mysql-instance created without restore-job
 Events:
-  Type    Reason   Age    From  Message
-  ----    ------   ----   ----  -------
-  Normal  Logging  2m56s  kopf  Handler 'mysql_on_create' succeeded.
-  Normal  Logging  2m56s  kopf  All handlers succeeded for creation.
-  Normal  Logging  2m56s  kopf  mysql Deployment mysql-instance created
+  Type    Reason   Age   From  Message
+  ----    ------   ----  ----  -------
+  Normal  Logging  25s   kopf  Handler 'mysql_on_create' succeeded.
+  Normal  Logging  25s   kopf  All handlers succeeded for creation.
+  Normal  Logging  25s   kopf  mysql deployment mysql-instance created
+  Error   Logging  25s   kopf  restore_job creation failed
 ```
-status subresource в crd почему-то добавлять не нужно, работает без этого
+
+В статусе `Message:  mysql-instance created without restore-job`, в эвентах `Error   Logging  25s   kopf  restore_job creation failed`
 
 
-Второе задание не доделал, очень мучительно отлаживать, когда зависает изменение или удаление ресурса
+Второе задание не cделал, неудобно отлаживать, но идея такая:
 
-Идея была сделать обработку изменения поля, `kopf.on.field`, примерно так:
+Добавляем обработку изменения поля, `kopf.on.field`
 ```
 @kopf.on.field('otus.homework', 'v1', 'mysqls', field='spec.password')
 def mysql_on_field(body, old, new, **kwargs):
@@ -864,9 +901,9 @@ def mysql_on_field(body, old, new, **kwargs):
 
     print(f'Handling the FIELD = {old} -> {new}')
     kopf.event(body, type='Warning', reason='Logging', message=f"password changed from {old} to {new}")
-    return {'message': f"password changed from {old.spec.password} to {new.spec.password}"}
+    return {'message': f"password changed from {old} to {new}"}
 ```
-При изменении password выполнять примерно такую джобу:
+При изменении password выполняется джоба:
 ```
 apiVersion: batch/v1
 kind: Job
@@ -882,11 +919,11 @@ spec:
     spec:
       containers:
       - name: change-password
-        image: busybox
-        command:
-        - export MYSQLPOD=$(kubectl get pods -l app=mysql-instance -o jsonpath="{.items[*].metadata.name}")
-        - kubectl exec -it $MYSQLPOD -- mysql -u root -p{{ oldpasswd }} -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('{{ newpasswd }}');" otus-database
+        image: mysql:5.7
+        command: ["/bin/bash", "-c"]
+        args:
+        - "mysql -u root -p{{ oldpasswd }} -h mysql-instance -e 'update mysql.user set authentication_string=password(\"{{ newpassword }}\") where user=\"root\";flush privileges;' otus-database"
       restartPolicy: Never
   backoffLimit: 0
-  ```
-Выполняется один раз, коннектится к базе, меняет пароль, ничего при этом не пересоздается
+```
+Должно коннектится к базе, менять пароль, ничего при этом не пересоздается. По факту, создается, коннектится к базе, но команда смены пароля не отрабатывает

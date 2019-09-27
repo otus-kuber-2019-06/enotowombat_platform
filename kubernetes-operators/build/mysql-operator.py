@@ -91,7 +91,19 @@ def mysql_on_create(body, spec, **kwargs):
     api = kubernetes.client.AppsV1Api()
     api.create_namespaced_deployment('default', deployment)
 
-    kopf.event(body, type='Normal', reason='Logging', message=f"mysql Deployment {body['metadata']['name']} created")
+    kopf.event(body, type='Normal', reason='Logging', message=f"mysql deployment {body['metadata']['name']} created")
+
+    # Пытаемся восстановиться из backup
+    try:
+        api = kubernetes.client.BatchV1Api()
+        api.create_namespaced_job('default', restore_job)
+        restore_result = 'with'
+        kopf.event(body, type='Normal', reason='Logging',
+                   message=f"restore_job created")
+    except kubernetes.client.rest.ApiException:
+        restore_result = 'without'
+        kopf.event(body, type='Error', reason='Logging',
+                   message=f"restore_job creation failed")
 
     # Cоздаем PVC  и PV для бэкапов:
     try:
@@ -109,14 +121,7 @@ def mysql_on_create(body, spec, **kwargs):
     except kubernetes.client.rest.ApiException:
         pass
 
-    return {'message': f"mysql-instance created without restore-job"}
-
-    # Пытаемся восстановиться из backup
-    try:
-        api = kubernetes.client.BatchV1Api()
-        api.create_namespaced_job('default', restore_job)
-    except kubernetes.client.rest.ApiException:
-        pass
+    return {'message': f"mysql-instance created {restore_result} restore-job"}
 
 
 @kopf.on.delete('otus.homework', 'v1', 'mysqls')
